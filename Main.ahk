@@ -1,77 +1,70 @@
 #Requires AutoHotkey v2.1-alpha.14
 #SingleInstance Force
+#Warn All, OutputDebug
 
 #DllLoad "Msftedit.dll"
 
+class Theme {
+  static Colors := {
+    Background: "0x202020", 
+    ButtonBg: "0x282828",
+    ButtonHover: "0x353535",
+    ButtonPressed: "0x1D1D1D",
+    Controls: "0x282828",
+    Text: "0xFFFFFF",
+    TitleBar: "0x151515",
+    Accent: "0x383838"
+}
+
+  CustomDraw(ctrl, lParam) {
+    static CDDS_PREPAINT := 0x1
+    nmcd := Buffer(48)
+    DllCall("RtlMoveMemory", "Ptr", nmcd, "Ptr", lParam, "Ptr", 48)
+
+    if (NumGet(nmcd, 8, "UInt") = CDDS_PREPAINT) {
+      isPressed := GetKeyState("LButton", "P")
+      hdc := NumGet(nmcd, 16, "UPtr")
+
+      color := isPressed ? Theme.Colors.ButtonPressed :
+              ctrl.Focused ? Theme.Colors.ButtonHover :
+              Theme.Colors.ButtonBg
+
+      DllCall("gdi32\SetTextColor", "Ptr", hdc, "UInt", Theme.Colors.Text)
+      DllCall("gdi32\SetBkColor", "Ptr", hdc, "UInt", color)
+      brush := DllCall("gdi32\CreateSolidBrush", "UInt", color, "Ptr")
+      DllCall("gdi32\SelectObject", "Ptr", hdc, "Ptr", brush)
+      rc := Buffer(16)
+      DllCall("GetClientRect", "Ptr", ctrl.hwnd, "Ptr", rc)
+      DllCall("RoundRect", "Ptr", hdc, "Int", 0, "Int", 0, 
+             "Int", NumGet(rc, 8, "Int"), "Int", NumGet(rc, 12, "Int"), 
+             "Int", 5, "Int", 5)
+      DllCall("gdi32\DeleteObject", "Ptr", brush)
+      return 0x20
+    }
+    return 0
+  }
+}
+
 TM()
 class TM {
-  /**
-   * GUI Dimensions configuration 
-   * @typedef {Object} Dimensions
-   * @property {Object} gui - GUI settings
-   * @property {number} gui.w - Window width (800px)
-   * @property {number} gui.h - Window height (530px)
-   * @property {number} gui.pad - Padding size (10px)
-   * 
-   * @property {Object} title - Title bar settings
-   * @property {number} title.h - Title height (30px)
-   * 
-   * @property {Object} button - Button configuration
-   * @property {number} button.w - Button width (100px)
-   * @property {number} button.h - Button height (30px)
-   * @property {number} button.bar - Button bar height
-   * 
-   * @property {Object} list - List view settings
-   * @property {number} list.w - List width
-   * @property {number} list.x - X position
-   * @property {number} list.y - Y position
-   * @property {number} list.h - Height
-   * 
-   * @property {Object} edit - Edit field settings
-   * @property {number} edit.w - Width (400px)
-   * @property {number} edit.h - Height (260px)
-   * @property {number} edit.x - X position
-   * @property {number} edit.y - Y position
-   * 
-   * @property {Object} fields - Function fields settings
-   * @property {number} fields.bw - Button width (100px)
-   * @property {number} fields.h - Height (30px)
-   * @property {number} fields.w - Width
-   * @property {number} fields.checkWidth - Checkbox width (120px)
-   */
-  /** @type {Dimensions} */
-  d := {}
-  static Hwnd := WinExist("A")
-
+  d := GuiDim.Create()
   __New() {
+    this.Directory := A_ScriptDir "\Tableau\Calculations"
+    this.fileArray := []
     this.iniFile := "!!!Tableau.ini"
     this.lastWindow := 0
     this.editField := ""
     this.richEditHwnd := 0
-    this.SetupDimensions() 
+    this.SetupDimensions()
     this.setupGui()
-    this.loadTexts()
+    this.LoadFiles()
     this.SetupHotkeys()
     this.ApplyDarkMode()
-    SetDarkMode(this.gui)
     OnMessage(0x0111, this.WM_COMMAND.Bind(this))
-
-    CoordMode("Mouse", "Screen")
-    MouseGetPos(&mouseX, &mouseY)
-    currMonitor := 0
-    loop MonitorGetCount() {
-        MonitorGet(A_Index, &left, &top, &right, &bottom)
-        if (mouseX >= left && mouseX <= right && mouseY >= top && mouseY <= bottom) {
-            currMonitor := A_Index
-            break
-        }
-    }
-
-    MonitorGetWorkArea(currMonitor, &left, &top, &right, &bottom)
-    guiX := Min(mouseX + 300, right - this.d.gui.w)
-    this.gui.Show("x" guiX " y" mouseY - 325)
- }
-
+    
+    pos := this.getScreenPosition()
+    this.gui.Show(Format("x{} y{}", pos.x, pos.y))
+  }
   SetupHotkeys() {
     HotIfWinActive("ahk_id " this.gui.Hwnd)
     Hotkey("Esc", this.closeGui.Bind(this))
@@ -87,42 +80,23 @@ class TM {
     HotIfWinExist()
     Hotkey("!y", (*) => this.gui.Show())
   }
-
   WM_COMMAND(wParam, lParam, msg, hwnd) {
     if ((wParam >> 16) & 0xFFFF = 0x0300 && lParam = this.richEdit.Hwnd)
       this.UpdateFields()
   }
-
   SetupDimensions() {
-
-    /**
-     * List width constant
-     * @type {number}
-     */
     listWidth := 210
-
-    /**
-     * RichEdit width
-     * @type {number}
-     */
     editWidth := 400
-
-    ; Calculate total width needed
-    totalWidth := listWidth + (editWidth) + 40  ; 40px for padding
-
-    /**
-     * Base GUI settings
-     * @type {Object}
-     */
+    totalWidth := listWidth + (editWidth) + 40
     gui := {
       w: totalWidth,
       h: 530,
       pad: 10
     }
-
     this.d := {
       gui: gui,
-      title: { h: 30 },
+      title: { 
+        h: 30 },
       button: {
         w: 100,
         h: 30,
@@ -144,97 +118,71 @@ class TM {
         checkWidth: 120
       }
     }
-
     this.d.list.h := gui.h - (this.d.title.h + this.d.button.bar) - gui.pad
     this.d.button.y := this.d.list.y + this.d.list.h - gui.pad
     this.d.edit.y := this.d.list.y
     this.d.fields.w := this.d.edit.w - this.d.button.w - gui.pad
   }
 
+  GuiFormat(x, y, w, h, extraParams := "") {
+    params := Format("x{} y{} w{} h{} Background{:X} c{:X}",
+      x, y, w, h, Theme.Colors.Controls, Theme.Colors.Text)
+    return extraParams ? params " " extraParams : params
+  }
+
   setupGui() {
     d := this.d
     this.gui := Gui("+AlwaysOnTop -Caption +MinSize" d.gui.w "x" d.gui.h)
     this.gui.MarginX := 0
-    this.gui.BackColor := "0x2D2D2D"
-    this.gui.SetFont("s11 cWhite", "Segoe UI")
+    this.gui.BackColor := Theme.Colors.Background
+    this.gui.SetFont("s11 c" Format("{:X}", Theme.Colors.Text), "Segoe UI")
+
     this.titleBar := this.setupTitleBar("TextManager")
+    this.textList := this.gui.AddListBox(this.GuiFormat(d.list.x, d.list.y, d.list.w, d.list.h))
+    this.textList.OnEvent("DoubleClick", this.LoadFileContents.Bind(this))
+    
+    this.richEdit := RichEdit.Create(this.gui, this.GuiFormat(d.edit.x, d.edit.y, d.edit.w, d.edit.h))
 
-    ; Main controls
-    this.textList := this.gui.AddListBox(
-      this.GuiFormat(d.list.x, d.list.y, d.list.w, d.list.h))
-    this.textList.OnEvent("DoubleClick", (*) => this.editSelectedItem())
-
-    ; RichEdit Box
-    this.richEdit := RichEdit.Create(this.gui, this.GuiFormat(
-      d.edit.x, d.edit.y, d.edit.w, d.edit.h))
-
-    ; Fields section
     fdY := d.edit.y + d.edit.h + d.gui.pad
     fdW := d.edit.w - d.button.w - d.gui.pad
-    this.fdBox := this.gui.AddEdit(
-      this.GuiFormat(d.edit.x, fdY, fdW, 30, "+ReadOnly -VScroll"))
-
-    ; Extract button
-    this.bExtract := this.gui.AddButton(
-      this.GuiFormat(fdY * 1.7125, fdY, d.button.w, 30),
-      "Extract"
-    )
+    this.fdBox := this.gui.AddEdit(this.GuiFormat(d.edit.x, fdY, fdW, 30, "+ReadOnly -VScroll"))
+    
+    this.bExtract := this.CreateStyledButton("Extract", d.edit.x + fdW + d.gui.pad, fdY, d.button.w, 30)
     this.bExtract.OnEvent("Click", this.ExtractFields.Bind(this))
 
-    bY := fdY + 60
-    spacing := 10
-
+    bY := fdY + 40
+    pad := this.d.gui.pad
+    editWidth := 150
     loop 3 {
-      rowY := bY + (A_Index - 1) * (d.fields.h + spacing) - 20
-      this.gui.AddCheckBox(
-        this.GuiFormat(d.edit.x, rowY, 16, d.fields.h)
-      )
-      this.gui.AddText( ; Field name
-        this.GuiFormat(d.edit.x + 20, rowY + 4, d.fields.checkWidth + 17, d.fields.h, "cWhite"),
-        "Field " A_Index
-      )
-      this.gui.AddEdit(
-        this.GuiFormat(d.edit.x + 85, rowY, 205, d.fields.h),
-        ; ExtractedFunctions[A_Index]
-      )
-      this.gui.AddButton(
-        this.GuiFormat(d.edit.x + 300, rowY, d.button.w, d.fields.h),
-        "Replace"
-      )
+      rowY := bY + (A_Index - 1) * (d.fields.h + pad)
+      this.gui.AddEdit(this.GuiFormat(d.edit.x, rowY, editWidth - d.gui.pad, d.fields.h))
+      this.gui.AddEdit(this.GuiFormat(d.edit.x + editWidth, rowY, editWidth - d.gui.pad, d.fields.h))
+      this.CreateStyledButton("Replace", d.edit.x + (editWidth) * 2, rowY, d.button.w, d.fields.h)
     }
 
-    ; Button Row Edit,
-    this.editBtn := this.gui.AddButton(
-      this.GuiFormat(d.gui.pad, d.button.y, d.button.w, d.button.h),
-      "Edit"
-    )
-
-    this.newBtn := this.gui.AddButton(
-      this.GuiFormat(d.gui.pad * 2 + d.button.w, d.button.y, d.button.w, d.button.h),
-      "New"
-    )
-
-    this.saveBtn := this.gui.AddButton(
-      this.GuiFormat(d.edit.x + 300, d.button.y, d.button.w, d.button.h),
-      "Save"
-    )
+    this.editBtn := this.CreateStyledButton("Edit", d.gui.pad, d.button.y, d.button.w, d.button.h)
+    this.newBtn := this.CreateStyledButton("New", d.gui.pad * 2 + d.button.w, d.button.y, d.button.w, d.button.h)
+    this.saveBtn := this.CreateStyledButton("Save", d.edit.x + 300, d.button.y, d.button.w, d.button.h)
+    
     this.setupButtonEvents()
   }
-
   setupTitleBar(text) {
-    tb := this.gui.AddText(Format("x0 y0 w640 h30 Background0x141414 Center 0x200 +0x8", 630), text)
-    tb.SetFont("s12 Bold cWhite")
+    tb := this.gui.AddText(Format("x0 y0 w{} h30 Background{} Center 0x200 +0x8", 
+                          this.d.gui.w, Format("{:X}", Theme.Colors.TitleBar)), text)
+    tb.SetFont("s12 Bold c" Format("{:X}", Theme.Colors.Text))
+    
     dragWindow(*) => PostMessage(0xA1, 2, , , "ahk_id " this.gui.Hwnd)
     tb.OnEvent("Click", dragWindow)
     tb.OnEvent("DoubleClick", this.closeGui.Bind(this))
-    return tb
+    return tb ; Fixed return value
+}
+  FileGetName(path) {
+    return RegExReplace(path, ".*\\")
   }
-
   OnRichEditChange(wParam, lParam, msg, hwnd) {
     if ((wParam >> 16) & 0xFFFF = 0x0300)
       this.UpdateFields()
   }
-
   UpdateFields(*) {
     text := RichEdit.GetText(this.richEdit)
     fields := []
@@ -245,19 +193,6 @@ class TM {
     }
     this.fdBox.Value := fields.Length ? "[" fields.Join("] [") "]" : ""
   }
-
-  /**
-   * @params x, y, w, h, extraParams
-   * @param {String} extraParams (default = "Background0x2b2b2b cWhite")
-   * @returns {String} 
-   * @example this.gui.AddListBox(this.GuiFormat(d.list.x, d.list.y, d.list.w, d.list.h))
-   */
-  GuiFormat(x, y, w, h, extraParams := "") {
-    static base := "x{} y{} w{} h{} Background0x2b2b2b cWhite"
-    params := Format(base, x, y, w, h)
-    return extraParams ? params " " extraParams : params
-  }
-
   ExtractFields(*) {
     try {
       text := RichEdit.GetText(this.richEdit)
@@ -265,118 +200,173 @@ class TM {
         Tooltip("No text found")
         return
       }
-
-      fields := []
+      
+      ; Store the original selection
+      origSel := this.richEdit.selection
+      
+      ; Find and highlight each field
       pos := 1
+      fields := []
       while pos := RegExMatch(text, "\[([^\]]+)\]", &match, pos) {
         field := match[1]
-        if !HasValue(fields, field)
+        if !this.HasInArray(fields, field)
           fields.Push(field)
+          
+        ; Select and color the field
+        this.richEdit.selection := [pos - 1, pos + match.Len - 1]
+        rtf := "{\rtf{\colortbl;\red100\green220\blue150;}\cf1 " RichEdit.EscapeRTF(match[0]) "}"
+        RichEdit.SetRTF(this.richEdit, rtf)
+        
         pos += match.Len
       }
-
-      HasValue(haystack, needle) {
-        for value in haystack
-          if (value = needle)
-            return true
-        return false
-      }
+      
+      ; Restore original selection
+      this.richEdit.selection := origSel
+      
       if fields.Length {
-        output := "[" fields.join(fields, "], [") "]"
-        if this.fdBox
-          this.fdBox.Value := output
-        else
-          Tooltip("fdBox missing")
+        output := "[" this.ArrayJoin(fields, "] [") "]"
+        this.fdBox.Value := output
       } else {
         Tooltip("No fields found")
-        this.fdBox.Value := ""
+        this.fdBox.Value := ""  
       }
-
     } catch Error as e {
       Tooltip("Error: " e.Message, 2000)
     }
   }
 
+
+  CreateStyledButton(text, x, y, w, h) {
+    btn := this.gui.AddButton(this.GuiFormat(x, y, w, h), text)
+    this.StyleButton(btn)
+    return btn
+  }
+
+  StyleButton(btn) {
+    static NM_CUSTOMDRAW := -12
+    btn.Opt("+0x4000000") ; WS_CLIPSIBLINGS
+    DllCall("uxtheme\SetWindowTheme", "Ptr", btn.hwnd, "Str", "DarkMode_Explorer", "Ptr", 0)
+    
+    static CDDS_PREPAINT := 0x1
+    btn.OnNotify(NM_CUSTOMDRAW, this.HandleCustomDraw.Bind(this))
+}
+
+; Add this as a separate method in the class
+HandleCustomDraw(ctrl, lParam) {
+    static CDDS_PREPAINT := 0x1
+    nmcd := Buffer(48)
+    DllCall("RtlMoveMemory", "Ptr", nmcd, "Ptr", lParam, "Ptr", 48)
+
+    if (NumGet(nmcd, 8, "UInt") = CDDS_PREPAINT) {
+        isPressed := GetKeyState("LButton", "P")
+        hdc := NumGet(nmcd, 16, "UPtr")
+        
+        color := isPressed ? Theme.Colors.ButtonPressed : 
+                ctrl.Focused ? Theme.Colors.ButtonHover : 
+                Theme.Colors.ButtonBg
+                
+        DllCall("gdi32\SetTextColor", "Ptr", hdc, "UInt", Theme.Colors.Text)
+        DllCall("gdi32\SetBkColor", "Ptr", hdc, "UInt", color)
+        
+        brush := DllCall("gdi32\CreateSolidBrush", "UInt", color, "Ptr")
+        DllCall("gdi32\SelectObject", "Ptr", hdc, "Ptr", brush)
+        
+        rc := Buffer(16)
+        DllCall("GetClientRect", "Ptr", ctrl.hwnd, "Ptr", rc)
+        DllCall("RoundRect", "Ptr", hdc, "Int", 0, "Int", 0, 
+               "Int", NumGet(rc, 8, "Int"), "Int", NumGet(rc, 12, "Int"), 
+               "Int", 5, "Int", 5)
+               
+        DllCall("gdi32\DeleteObject", "Ptr", brush)
+        return 0x20 ; CDRF_NOTIFYITEMDRAW
+    }
+    return 0
+}
+
+
+  HasInArray(arr, needle) {
+    for value in arr {
+      if value = needle
+        return true
+    }
+    return false
+  }
+
+  ArrayJoin(arr, delim) {
+    str := ""
+    for i, val in arr {
+      str .= (i > 1 ? delim : "") val
+    }
+    return str
+  }
   setupButtonEvents() {
     this.newBtn.OnEvent("Click", (*) => this.newItem())
     this.saveBtn.OnEvent("Click", (*) => this.saveEdit(this.textList.Value))
   }
-
   GetTxtFiles(dir) {
     files := []
     Loop Files dir "\*.txt" {
-        files.Push(A_LoopFileName)
+      files.Push(A_LoopFileName)
     }
     return files
-}
-
-loadTexts() {
-    try {
-        scriptDir := A_ScriptDir "\Tableau\Calculations"
-        if !DirExist(scriptDir)
-            DirCreate(scriptDir)
-
-        files := this.GetTxtFiles(scriptDir) 
-        items := []
-
-        for i, file in files {
-            fileContent := FileRead(scriptDir "\" file)
-            contentLines := StrSplit(fileContent, "`n")
-            
-            ; Get title and content
-            title := RegExReplace(contentLines[1], "^// ?", "")  
-            calculation := fileContent
-            
-            ; Format: "Display Text|Full Content"
-            listboxItem := Format("{1}. {2}|{3}", i, title, calculation)
-            items.Push(listboxItem)
-        }
-
-        this.textList.Delete()
-        this.textList.Add(items)
-        this.textList.Choose(1)
-        this.updateRichEdit()
+  }
+  LoadFiles() {
+    filepath := A_ScriptDir "\Tableau\Calculations\*.txt"
+    Loop Files filepath {
+      this.fileArray.Push({
+        name: RegExReplace(A_LoopFileName, "\.txt$")
+        , path: A_LoopFilePath
+      })
     }
-}
-
-updateRichEdit() {
-    try {
-        if this.textList.Value {
-            ; Get the full text after the pipe separator
-            fullText := StrSplit(this.textList.Text, "|")[2]
-            if fullText
-                RichEdit.SetText(this.richEdit, fullText)
-        }
+    this.UpdateFileList()
+  }
+  UpdateFileList() {
+    this.textList.Delete()
+    for file in this.fileArray {
+      this.textList.Add([file.name])
     }
-}
-
-
+  }
+  LoadFileContents(*) {
+    selectedIndex := this.textList.Value
+    if (selectedIndex > 0) {
+      selectedFile := this.fileArray[selectedIndex]
+      file := FileOpen(selectedFile.path, "r")
+      if IsObject(file) {
+        this.gui.Submit(false)
+        RichEdit.SetText(this.richEdit, file.Read())
+        file.Close()
+      }
+    }
+  }
+  updateRichEdit() {
+    try {
+      if this.textList.Value {
+        fullText := StrSplit(this.textList.Text, "|")[2]
+        if fullText
+          RichEdit.SetText(this.richEdit, fullText)
+      }
+    }
+  }
   newItem(*) {
     items := ControlGetItems(this.textList)
     newIndex := items.Length + 1
     items.Push(newIndex ". New Item")
-
     this.textList.Delete()
     this.textList.Add(items)
     this.textList.Choose(newIndex)
-
     RichEdit.SetText(this.richEdit, "")
     this.editSelectedItem()
   }
-
   replaceItem(*) {
     selectedIndex := this.textList.Value
     if !selectedIndex
       return
-
     text := RichEdit.GetText(this.richEdit)
     if !text
       return
-
     IniWrite(text, this.iniFile, "Functions", "key" selectedIndex)
-    this.loadTexts()
+    this.UpdateFileList() ; Use existing UpdateFileList instead of loadTexts
   }
-
   ApplyDarkMode() {
     for ctrl in this.gui {
       DllCall("uxtheme\SetWindowTheme", "ptr", ctrl.hwnd, "ptr", StrPtr("DarkMode_Explorer"), "ptr", 0)
@@ -385,18 +375,17 @@ updateRichEdit() {
       attr := VerCompare(A_OSVersion, "10.0.18985") >= 0 ? 20 : 19
       DllCall("dwmapi\DwmSetWindowAttribute", "ptr", this.gui.hwnd, "int", attr, "int*", true, "int", 4)
     }
-    for v in [135, 136] {
-      DllCall(DllCall("GetProcAddress", "ptr", DllCall("GetModuleHandle", "str", "uxtheme", "ptr"), "ptr", v, "ptr"), "int", 2)
+    uxtheme := DllCall("GetModuleHandle", "str", "uxtheme", "ptr")
+    for procId in [135, 136] {
+      DllCall(DllCall("GetProcAddress", "ptr", uxtheme, "ptr", procId, "ptr"), "int", 2)
     }
   }
-
   MonitorRichEdit(wParam, lParam, msg, hwnd) {
     try {
       if this.richEdit && ((wParam >> 16) & 0xFFFF = 0x0300) && (lParam = this.richEdit.Hwnd)
         this.UpdateFields()
     }
   }
-
   getScreenPosition() {
     CoordMode("Mouse", "Screen")
     MouseGetPos(&mouseX, &mouseY)
@@ -414,7 +403,6 @@ updateRichEdit() {
     }
     return { x: mouseX + 150, y: mouseY }
   }
-
   IsTextRunnerVisible() {
     try {
       if !this.gui || !this.textList
@@ -423,7 +411,6 @@ updateRichEdit() {
     }
     return false
   }
-
   handleWheel(direction) {
     if (!this.IsTextRunnerVisible())
       return
@@ -433,7 +420,6 @@ updateRichEdit() {
     if (newValue >= 1 && newValue <= items.Length)
       this.textList.Choose(newValue)
   }
-
   ScrollHandler(wParam, lParam, msg, hwnd) {
     if (!this.IsTextRunnerVisible())
       return
@@ -445,29 +431,24 @@ updateRichEdit() {
     this.handleWheel(direction)
     return 0
   }
-
   cancelEdit(*) {
     if (this.editField) {
       this.editField.Destroy()
       this.editField := ""
     }
   }
-
   saveEdit(selectedItemIndex, *) {
     try {
-      newText := RichEdit.GetText(this.richEdit)  ; Use static class method
+      newText := RichEdit.GetText(this.richEdit)
       if !newText
         return
-
       items := ControlGetItems(this.textList)
       if (selectedItemIndex <= items.Length) {
         prefix := SubStr(items[selectedItemIndex], 1, InStr(items[selectedItemIndex], ".") + 1)
         items[selectedItemIndex] := prefix . newText
-
         this.textList.Delete()
         this.textList.Add(items)
         this.textList.Choose(selectedItemIndex)
-
         IniWrite(newText, this.iniFile, "key" selectedItemIndex)
       }
     } catch Error as e {
@@ -519,10 +500,9 @@ updateRichEdit() {
   }
 
   closeGui(*) => this.gui.Hide()
+  SetTheme(pszSubAppName, pszSubIdList := "") => (!DllCall("uxtheme\SetWindowTheme", "ptr", this.gui.hwnd, "ptr", StrPtr(pszSubAppName), "ptr", pszSubIdList ? StrPtr(pszSubIdList) : 0) ? true : false)
 
-  SetTheme(pszSubAppName, pszSubIdList := "") => (!DllCall("uxtheme\SetWindowTheme", "ptr", TM.hwnd, "ptr", StrPtr(pszSubAppName), "ptr", pszSubIdList ? StrPtr(pszSubIdList) : 0) ? true : false)
 }
-
 
 ;#Region RichEdit
 class RichEdit {
@@ -554,6 +534,32 @@ class RichEdit {
     )
   }
 
+  static FormatText(text) {
+    colors := {
+      white: "\red255\green255\blue255",
+      blue: "\red150\green250\blue200",
+      red: "\red255\green0\blue0",
+      field: "\red100\green220\blue150"
+    }
+
+    rtf := "{\rtf{\colortbl;"
+        . colors.white ";"
+        . colors.blue ";"
+        . colors.red ";"
+        . colors.field ";"
+        . "}\fs20"
+
+    loop parse text, "`n", "`r" {
+      line := A_LoopField
+      if A_Index = 1
+        rtf .= "\cf2 " this.EscapeRTF(line) "\line"
+      else
+        rtf .= "\cf1 " this.EscapeRTF(line) "\line"
+    }
+    rtf .= "}"
+    return rtf
+  }
+
   SelectedText {
     get {
       Selection := this.selection
@@ -570,7 +576,7 @@ class RichEdit {
       return Value
     }
   }
-
+  
   EventMask {
     get => this._EventMask
     set => (this._EventMask := Value, this.SendMsg(0x445, 0, Value), Value)
@@ -611,21 +617,24 @@ class RichEdit {
     get => this.SendMsg(0xB8, 0, 0)
     set => (this.SendMsg(0xB9, Value, 0), Value)
   }
-
   static Create(gui, options) {
     static WM_VSCROLL := 0x0115
     static COLOR_SCROLLBAR := 0
     static COLOR_BTNFACE := 15
 
-    control := gui.AddCustom("ClassRichEdit50W +0x5031b1c4 +E0x20000 +Wrap " options)
-    SendMessage(0x0443, 0, 0x202020, control)
-    SendMessage(0x044D, 6, 0, control)
-    DllCall("uxtheme\SetWindowTheme", "Ptr", control.hwnd, "Str", "DarkMode_Explorer", "Ptr", 0)
+    ; Add thin border style and remove the default border
+    control := gui.AddCustom("ClassRichEdit50W +0x5031b1c4 +E0x20000 +Wrap -Border +Theme " options)
 
+    ; Set darker background color
+    SendMessage(0x0443, 0, 0x202020, control)  
+    ; Reduce border width/padding
+    SendMessage(0x044D, 4, 0x202020, control)
+
+    DllCall("uxtheme\SetWindowTheme", "Ptr", control.hwnd, "Str", "DarkMode_CFD", "Ptr", 0)
     static WM_SYSCOLORCHANGE := 0x0015
     control.OnMessage(WM_SYSCOLORCHANGE, (ctrl, *) => (
-      this.SetSysColor(COLOR_SCROLLBAR, 0x383838),
-      this.SetSysColor(COLOR_BTNFACE, 0x383838)
+        this.SetSysColor(COLOR_SCROLLBAR, 0x262626),  ; Darker scrollbar color
+        this.SetSysColor(COLOR_BTNFACE, 0x262626)     ; Darker button face color
     ))
 
     PostMessage(WM_SYSCOLORCHANGE, 0, 0, control)
@@ -683,30 +692,6 @@ class RichEdit {
     SendMessage(0x461, settextex, buf, control)
   }
 
-  static FormatText(text) {
-    colors := {
-      white: "\red255\green255\blue255",
-      blue: "\red150\green250\blue200",
-      red: "\red255\green0\blue0"
-    }
-
-    rtf := "{\rtf{\colortbl;"
-      . colors.white ";"
-      . colors.blue ";"
-      . colors.red ";"
-      . "}\fs20"
-
-    loop parse text, "`n", "`r" {
-      line := A_LoopField
-      if A_Index = 1
-        rtf .= "\cf2 " this.EscapeRTF(line) "\line"
-      else
-        rtf .= "\cf1 " this.EscapeRTF(line) "\line"
-    }
-    rtf .= "}"
-    return rtf
-  }
-
   static EscapeRTF(text) {
     return RegExReplace(text, "([{}])", "\\$1")
   }
@@ -721,10 +706,33 @@ class RichEdit {
   }
 }
 
-SetDarkMode(_obj) {
-  For v in [135, 136]
-    DllCall(DllCall("GetProcAddress", "ptr", DllCall("GetModuleHandle", "str", "uxtheme", "ptr"), "ptr", v, "ptr"), "int", 2)
-  if !(attr := VerCompare(A_OSVersion, "10.0.18985") >= 0 ? 20 : VerCompare(A_OSVersion, "10.0.17763") >= 0 ? 19 : 0)
-    return false
-  DllCall("dwmapi\DwmSetWindowAttribute", "ptr", _obj.hwnd, "int", attr, "int*", true, "int", 4)
+class GuiDim {
+  static p := 10
+  static Create() {
+    return {
+      p: this.p,
+      gui: this.Gui(),
+      section: this.Sections(),
+      size: this.Sizes()
+    }
+  }
+  static Gui() {
+    return { w: 800, h: 600 }
+  }
+  static Sections() {
+    return {
+      left: { x: this.p, w: 250 },
+      right: { x: this.p * 2 + 250, w: 500 }
+    }
+  }
+  static Sizes() {
+    return {
+      w: { xs: 75, s: 100, m: 150, l: 200, xl: 250 },
+      h: { xs: 23, s: 30, m: 40, l: 50, xl: 60 }
+    }
+  }
+  static Format(x, y, w, h, opts := "") {
+    return Format("x{} y{} w{} h{} {} Background0x2b2b2b cWhite",
+      x, y, w, h, opts ? " " opts : "")
+  }
 }
