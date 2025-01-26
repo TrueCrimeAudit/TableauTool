@@ -6,7 +6,7 @@
 
 class Theme {
   static Colors := {
-    Background: "0x202020", 
+    Background: "0x202020",
     ButtonBg: "0x282828",
     ButtonHover: "0x353535",
     ButtonPressed: "0x1D1D1D",
@@ -14,7 +14,7 @@ class Theme {
     Text: "0xFFFFFF",
     TitleBar: "0x151515",
     Accent: "0x383838"
-}
+  }
 
   CustomDraw(ctrl, lParam) {
     static CDDS_PREPAINT := 0x1
@@ -26,8 +26,8 @@ class Theme {
       hdc := NumGet(nmcd, 16, "UPtr")
 
       color := isPressed ? Theme.Colors.ButtonPressed :
-              ctrl.Focused ? Theme.Colors.ButtonHover :
-              Theme.Colors.ButtonBg
+        ctrl.Focused ? Theme.Colors.ButtonHover :
+        Theme.Colors.ButtonBg
 
       DllCall("gdi32\SetTextColor", "Ptr", hdc, "UInt", Theme.Colors.Text)
       DllCall("gdi32\SetBkColor", "Ptr", hdc, "UInt", color)
@@ -35,9 +35,9 @@ class Theme {
       DllCall("gdi32\SelectObject", "Ptr", hdc, "Ptr", brush)
       rc := Buffer(16)
       DllCall("GetClientRect", "Ptr", ctrl.hwnd, "Ptr", rc)
-      DllCall("RoundRect", "Ptr", hdc, "Int", 0, "Int", 0, 
-             "Int", NumGet(rc, 8, "Int"), "Int", NumGet(rc, 12, "Int"), 
-             "Int", 5, "Int", 5)
+      DllCall("RoundRect", "Ptr", hdc, "Int", 0, "Int", 0,
+        "Int", NumGet(rc, 8, "Int"), "Int", NumGet(rc, 12, "Int"),
+        "Int", 5, "Int", 5)
       DllCall("gdi32\DeleteObject", "Ptr", brush)
       return 0x20
     }
@@ -61,7 +61,7 @@ class TM {
     this.SetupHotkeys()
     this.ApplyDarkMode()
     OnMessage(0x0111, this.WM_COMMAND.Bind(this))
-    
+
     pos := this.getScreenPosition()
     this.gui.Show(Format("x{} y{}", pos.x, pos.y))
   }
@@ -95,7 +95,7 @@ class TM {
     }
     this.d := {
       gui: gui,
-      title: { 
+      title: {
         h: 30 },
       button: {
         w: 100,
@@ -140,13 +140,13 @@ class TM {
     this.titleBar := this.setupTitleBar("TextManager")
     this.textList := this.gui.AddListBox(this.GuiFormat(d.list.x, d.list.y, d.list.w, d.list.h))
     this.textList.OnEvent("DoubleClick", this.LoadFileContents.Bind(this))
-    
+
     this.richEdit := RichEdit.Create(this.gui, this.GuiFormat(d.edit.x, d.edit.y, d.edit.w, d.edit.h))
 
     fdY := d.edit.y + d.edit.h + d.gui.pad
     fdW := d.edit.w - d.button.w - d.gui.pad
     this.fdBox := this.gui.AddEdit(this.GuiFormat(d.edit.x, fdY, fdW, 30, "+ReadOnly -VScroll"))
-    
+
     this.bExtract := this.CreateStyledButton("Extract", d.edit.x + fdW + d.gui.pad, fdY, d.button.w, 30)
     this.bExtract.OnEvent("Click", this.ExtractFields.Bind(this))
 
@@ -163,19 +163,19 @@ class TM {
     this.editBtn := this.CreateStyledButton("Edit", d.gui.pad, d.button.y, d.button.w, d.button.h)
     this.newBtn := this.CreateStyledButton("New", d.gui.pad * 2 + d.button.w, d.button.y, d.button.w, d.button.h)
     this.saveBtn := this.CreateStyledButton("Save", d.edit.x + 300, d.button.y, d.button.w, d.button.h)
-    
+
     this.setupButtonEvents()
   }
   setupTitleBar(text) {
-    tb := this.gui.AddText(Format("x0 y0 w{} h30 Background{} Center 0x200 +0x8", 
-                          this.d.gui.w, Format("{:X}", Theme.Colors.TitleBar)), text)
+    tb := this.gui.AddText(Format("x0 y0 w{} h30 Background{} Center 0x200 +0x8",
+      this.d.gui.w, Format("{:X}", Theme.Colors.TitleBar)), text)
     tb.SetFont("s12 Bold c" Format("{:X}", Theme.Colors.Text))
-    
+
     dragWindow(*) => PostMessage(0xA1, 2, , , "ahk_id " this.gui.Hwnd)
     tb.OnEvent("Click", dragWindow)
     tb.OnEvent("DoubleClick", this.closeGui.Bind(this))
     return tb ; Fixed return value
-}
+  }
   FileGetName(path) {
     return RegExReplace(path, ".*\\")
   }
@@ -193,46 +193,45 @@ class TM {
     }
     this.fdBox.Value := fields.Length ? "[" fields.Join("] [") "]" : ""
   }
+
+  static GetText(control) {
+    buf := Buffer(32768)
+    SendMessage(0x43E, 32768, buf.Ptr, control)
+    return StrGet(buf)
+  }
+  
   ExtractFields(*) {
-    try {
-      text := RichEdit.GetText(this.richEdit)
-      if !text {
-        Tooltip("No text found")
-        return
-      }
-      
-      ; Store the original selection
-      origSel := this.richEdit.selection
-      
-      ; Find and highlight each field
-      pos := 1
-      fields := []
-      while pos := RegExMatch(text, "\[([^\]]+)\]", &match, pos) {
-        field := match[1]
-        if !this.HasInArray(fields, field)
-          fields.Push(field)
-          
-        ; Select and color the field
-        this.richEdit.selection := [pos - 1, pos + match.Len - 1]
-        rtf := "{\rtf{\colortbl;\red100\green220\blue150;}\cf1 " RichEdit.EscapeRTF(match[0]) "}"
-        RichEdit.SetRTF(this.richEdit, rtf)
-        
-        pos += match.Len
-      }
-      
-      ; Restore original selection
-      this.richEdit.selection := origSel
-      
-      if fields.Length {
-        output := "[" this.ArrayJoin(fields, "] [") "]"
-        this.fdBox.Value := output
-      } else {
-        Tooltip("No fields found")
-        this.fdBox.Value := ""  
-      }
-    } catch Error as e {
-      Tooltip("Error: " e.Message, 2000)
+    text := RichEdit.GetText(this.richEdit)
+    if !text {
+      Tooltip("No text found")
+      return
     }
+  
+    pos := 1
+    fields := []
+    while pos := RegExMatch(text, "\[([^\]]+)\]", &match, pos) {
+      field := match[1]
+      if !this.HasInArray(fields, field)
+        fields.Push(field)
+      pos += match.Len
+    }
+  
+    if fields.Length {
+      str := ""
+      for i, val in fields
+        str .= (i > 1 ? "] [" : "") val
+      this.fdBox.Value := "[" str "]"
+    } else {
+      this.fdBox.Value := ""
+    }
+  }
+
+  HasValue(haystack, needle) {
+    for value in haystack {
+      if value = needle
+        return true
+    }
+    return false
   }
 
 
@@ -246,42 +245,42 @@ class TM {
     static NM_CUSTOMDRAW := -12
     btn.Opt("+0x4000000") ; WS_CLIPSIBLINGS
     DllCall("uxtheme\SetWindowTheme", "Ptr", btn.hwnd, "Str", "DarkMode_Explorer", "Ptr", 0)
-    
+
     static CDDS_PREPAINT := 0x1
     btn.OnNotify(NM_CUSTOMDRAW, this.HandleCustomDraw.Bind(this))
-}
+  }
 
-; Add this as a separate method in the class
-HandleCustomDraw(ctrl, lParam) {
+  ; Add this as a separate method in the class
+  HandleCustomDraw(ctrl, lParam) {
     static CDDS_PREPAINT := 0x1
     nmcd := Buffer(48)
     DllCall("RtlMoveMemory", "Ptr", nmcd, "Ptr", lParam, "Ptr", 48)
 
     if (NumGet(nmcd, 8, "UInt") = CDDS_PREPAINT) {
-        isPressed := GetKeyState("LButton", "P")
-        hdc := NumGet(nmcd, 16, "UPtr")
-        
-        color := isPressed ? Theme.Colors.ButtonPressed : 
-                ctrl.Focused ? Theme.Colors.ButtonHover : 
-                Theme.Colors.ButtonBg
-                
-        DllCall("gdi32\SetTextColor", "Ptr", hdc, "UInt", Theme.Colors.Text)
-        DllCall("gdi32\SetBkColor", "Ptr", hdc, "UInt", color)
-        
-        brush := DllCall("gdi32\CreateSolidBrush", "UInt", color, "Ptr")
-        DllCall("gdi32\SelectObject", "Ptr", hdc, "Ptr", brush)
-        
-        rc := Buffer(16)
-        DllCall("GetClientRect", "Ptr", ctrl.hwnd, "Ptr", rc)
-        DllCall("RoundRect", "Ptr", hdc, "Int", 0, "Int", 0, 
-               "Int", NumGet(rc, 8, "Int"), "Int", NumGet(rc, 12, "Int"), 
-               "Int", 5, "Int", 5)
-               
-        DllCall("gdi32\DeleteObject", "Ptr", brush)
-        return 0x20 ; CDRF_NOTIFYITEMDRAW
+      isPressed := GetKeyState("LButton", "P")
+      hdc := NumGet(nmcd, 16, "UPtr")
+
+      color := isPressed ? Theme.Colors.ButtonPressed :
+        ctrl.Focused ? Theme.Colors.ButtonHover :
+        Theme.Colors.ButtonBg
+
+      DllCall("gdi32\SetTextColor", "Ptr", hdc, "UInt", Theme.Colors.Text)
+      DllCall("gdi32\SetBkColor", "Ptr", hdc, "UInt", color)
+
+      brush := DllCall("gdi32\CreateSolidBrush", "UInt", color, "Ptr")
+      DllCall("gdi32\SelectObject", "Ptr", hdc, "Ptr", brush)
+
+      rc := Buffer(16)
+      DllCall("GetClientRect", "Ptr", ctrl.hwnd, "Ptr", rc)
+      DllCall("RoundRect", "Ptr", hdc, "Int", 0, "Int", 0,
+        "Int", NumGet(rc, 8, "Int"), "Int", NumGet(rc, 12, "Int"),
+        "Int", 5, "Int", 5)
+
+      DllCall("gdi32\DeleteObject", "Ptr", brush)
+      return 0x20 ; CDRF_NOTIFYITEMDRAW
     }
     return 0
-}
+  }
 
 
   HasInArray(arr, needle) {
@@ -528,9 +527,9 @@ class RichEdit {
     )
     set => (
       i ? (t := this.selection, t[i] := Value, Value := t) : "",
-    NumPut("Int", Value[1], "Int", Value[2], charrange := Buffer(8)),
-    this.SendMsg(0x437, 0, charrange),
-    Value
+      NumPut("Int", Value[1], "Int", Value[2], charrange := Buffer(8)),
+      this.SendMsg(0x437, 0, charrange),
+      Value
     )
   }
 
@@ -543,11 +542,11 @@ class RichEdit {
     }
 
     rtf := "{\rtf{\colortbl;"
-        . colors.white ";"
-        . colors.blue ";"
-        . colors.red ";"
-        . colors.field ";"
-        . "}\fs20"
+      . colors.white ";"
+      . colors.blue ";"
+      . colors.red ";"
+      . colors.field ";"
+      . "}\fs20"
 
     loop parse text, "`n", "`r" {
       line := A_LoopField
@@ -576,7 +575,7 @@ class RichEdit {
       return Value
     }
   }
-  
+
   EventMask {
     get => this._EventMask
     set => (this._EventMask := Value, this.SendMsg(0x445, 0, Value), Value)
@@ -626,15 +625,15 @@ class RichEdit {
     control := gui.AddCustom("ClassRichEdit50W +0x5031b1c4 +E0x20000 +Wrap -Border +Theme " options)
 
     ; Set darker background color
-    SendMessage(0x0443, 0, 0x202020, control)  
+    SendMessage(0x0443, 0, 0x202020, control)
     ; Reduce border width/padding
     SendMessage(0x044D, 4, 0x202020, control)
 
     DllCall("uxtheme\SetWindowTheme", "Ptr", control.hwnd, "Str", "DarkMode_CFD", "Ptr", 0)
     static WM_SYSCOLORCHANGE := 0x0015
     control.OnMessage(WM_SYSCOLORCHANGE, (ctrl, *) => (
-        this.SetSysColor(COLOR_SCROLLBAR, 0x262626),  ; Darker scrollbar color
-        this.SetSysColor(COLOR_BTNFACE, 0x262626)     ; Darker button face color
+      this.SetSysColor(COLOR_SCROLLBAR, 0x262626),  ; Darker scrollbar color
+      this.SetSysColor(COLOR_BTNFACE, 0x262626)     ; Darker button face color
     ))
 
     PostMessage(WM_SYSCOLORCHANGE, 0, 0, control)
